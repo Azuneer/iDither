@@ -4,11 +4,18 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var viewModel = DitherViewModel()
     @State private var isImporting = false
-    @State private var isExporting = false
+    
+    // Export State
+    @State private var showExportOptionsSheet = false
+    @State private var exportFormat: ExportFormat = .png
+    @State private var exportScale: CGFloat = 1.0
+    @State private var jpegQuality: Double = 0.85
+    @State private var preserveMetadata = true
+    @State private var flattenTransparency = false
     
     var body: some View {
         NavigationSplitView {
-            SidebarView(viewModel: viewModel, isImporting: $isImporting, isExporting: $isExporting)
+            SidebarView(viewModel: viewModel, isImporting: $isImporting, showExportOptions: $showExportOptionsSheet)
                 .navigationSplitViewColumnWidth(min: 280, ideal: 300)
         } detail: {
             DetailView(viewModel: viewModel, loadFromProviders: loadFromProviders)
@@ -23,6 +30,8 @@ struct ContentView: View {
         .onChange(of: viewModel.colorDepth) { _, _ in viewModel.processImage() }
         .onChange(of: viewModel.selectedAlgorithm) { _, _ in viewModel.processImage() }
         .onChange(of: viewModel.isGrayscale) { _, _ in viewModel.processImage() }
+        // CHAOS / FX PARAMETERS (Grouped in modifier)
+        .onChaosChange(viewModel: viewModel)
         // File Importer at the very top level
         .fileImporter(
             isPresented: $isImporting,
@@ -38,14 +47,84 @@ struct ContentView: View {
                 print("Import failed: \(error.localizedDescription)")
             }
         }
-        .fileExporter(
-            isPresented: $isExporting,
-            document: ImageDocument(image: viewModel.processedImage),
-            contentType: .png,
-            defaultFilename: "dithered_image"
-        ) { result in
-            if case .failure(let error) = result {
-                print("Export failed: \(error.localizedDescription)")
+        // Export Options Sheet
+        .sheet(isPresented: $showExportOptionsSheet) {
+            NavigationStack {
+                Form {
+                    // SECTION 1: Format
+                    Section("Format") {
+                        Picker("Format", selection: $exportFormat) {
+                            ForEach(ExportFormat.allCases) { format in
+                                Text(format.rawValue).tag(format)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        
+                        // Show quality slider ONLY for JPEG
+                        if exportFormat == .jpeg {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Quality")
+                                    Spacer()
+                                    Text("\(Int(jpegQuality * 100))%")
+                                        .foregroundColor(.secondary)
+                                        .font(.system(size: 13, weight: .medium))
+                                }
+                                Slider(value: $jpegQuality, in: 0.1...1.0)
+                                    .tint(.accentColor)
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+                    
+                    // SECTION 2: Resolution
+                    Section("Resolution") {
+                        Picker("Scale", selection: $exportScale) {
+                            Text("1× (Original)").tag(1.0)
+                            Text("2× (Double)").tag(2.0)
+                            Text("4× (Quadruple)").tag(4.0)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    
+                    // SECTION 3: Options
+                    Section("Options") {
+                        Toggle("Preserve metadata", isOn: $preserveMetadata)
+                        
+                        if exportFormat == .png || exportFormat == .tiff {
+                            Toggle("Flatten transparency", isOn: $flattenTransparency)
+                        }
+                    }
+                    
+                    // SECTION 4: Info
+                    Section {
+                        HStack {
+                            Image(systemName: "info.circle")
+                                .foregroundColor(.secondary)
+                            Text("Export will apply all current dithering settings")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .formStyle(.grouped)
+                .navigationTitle("Export Options")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            showExportOptionsSheet = false
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Export...") {
+                            showExportOptionsSheet = false
+                            // Now open NSSavePanel with configured settings
+                            performExportWithOptions()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+                .frame(minWidth: 450, idealWidth: 500, minHeight: 400)
             }
         }
     }
@@ -65,39 +144,41 @@ struct ContentView: View {
         }
         return false
     }
-}
-
-// Helper for FileExporter
-struct ImageDocument: FileDocument {
-    var image: CGImage?
     
-    init(image: CGImage?) {
-        self.image = image
-    }
-    
-    static var readableContentTypes: [UTType] { [.png] }
-    
-    init(configuration: ReadConfiguration) throws {
-        // Read not implemented for export-only
-        self.image = nil
-    }
-    
-    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        guard let image = image else { throw CocoaError(.fileWriteUnknown) }
-        let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-        guard let tiffData = nsImage.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let pngData = bitmap.representation(using: .png, properties: [:]) else {
-            throw CocoaError(.fileWriteUnknown)
+    func performExportWithOptions() {
+        let savePanel = NSSavePanel()
+        savePanel.canCreateDirectories = true
+        savePanel.showsTagField = true
+        
+        // Set filename with correct extension based on chosen format
+        let baseName = "dithered_image"
+        savePanel.nameFieldStringValue = "\(baseName).\(exportFormat.fileExtension)"
+        
+        // Set allowed file types
+        savePanel.allowedContentTypes = [exportFormat.utType]
+        
+        savePanel.begin { response in
+            guard response == .OK,
+                  let url = savePanel.url else { return }
+            
+            // Perform export with the configured settings
+            viewModel.exportImage(to: url,
+                                  format: exportFormat,
+                                  scale: exportScale,
+                                  jpegQuality: jpegQuality,
+                                  preserveMetadata: preserveMetadata,
+                                  flattenTransparency: flattenTransparency)
         }
-        return FileWrapper(regularFileWithContents: pngData)
     }
 }
 
+// SidebarView (Updated to trigger sheet)
 struct SidebarView: View {
     @Bindable var viewModel: DitherViewModel
     @Binding var isImporting: Bool
-    @Binding var isExporting: Bool
+    @Binding var showExportOptions: Bool
+    
+    @State private var showChaosSection = false // Chaos Section State
     
     var body: some View {
         ScrollView {
@@ -115,7 +196,7 @@ struct SidebarView: View {
                             Text(algo.name).tag(algo)
                         }
                     }
-                    .labelsHidden() // Native look: just the dropdown
+                    .labelsHidden()
                     
                     Toggle("Grayscale / 1-bit", isOn: $viewModel.isGrayscale)
                         .toggleStyle(.switch)
@@ -201,12 +282,109 @@ struct SidebarView: View {
                     }
                 }
                 
+                Divider()
+                    .padding(.vertical, 8)
+                
+                // --- CHAOS / FX SECTION ---
+                VStack(alignment: .leading, spacing: 0) {
+                    Button(action: {
+                        withAnimation(.snappy) {
+                            showChaosSection.toggle()
+                        }
+                    }) {
+                        HStack {
+                            Text("CHAOS / FX")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Image(systemName: showChaosSection ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 4)
+                    
+                    if showChaosSection {
+                        VStack(alignment: .leading, spacing: 16) {
+                            // Pattern Distortion
+                            Text("Pattern Distortion")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary.opacity(0.8))
+                                .padding(.top, 12)
+                            
+                            SliderControl(label: "Offset Jitter", value: $viewModel.offsetJitter, range: 0...1, format: .percent)
+                            SliderControl(label: "Rotation", value: $viewModel.patternRotation, range: 0...1, format: .percent)
+                            
+                            // Error Propagation (Floyd-Steinberg only)
+                            if viewModel.selectedAlgorithm == .floydSteinberg {
+                                Text("Error Propagation")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.secondary.opacity(0.8))
+                                    .padding(.top, 12)
+                                
+                                SliderControl(label: "Error Amplify", value: $viewModel.errorAmplify, range: 0.5...3.0, format: .multiplier)
+                                SliderControl(label: "Random Direction", value: $viewModel.errorRandomness, range: 0...1, format: .percent)
+                            }
+                            
+                            // Threshold Effects
+                            Text("Threshold Effects")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary.opacity(0.8))
+                                .padding(.top, 12)
+                            
+                            SliderControl(label: "Noise Injection", value: $viewModel.thresholdNoise, range: 0...1, format: .percent)
+                            SliderControl(label: "Wave Distortion", value: $viewModel.waveDistortion, range: 0...1, format: .percent)
+                            
+                            // Spatial Glitch
+                            Text("Spatial Glitch")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary.opacity(0.8))
+                                .padding(.top, 12)
+                            
+                            SliderControl(label: "Pixel Displace", value: $viewModel.pixelDisplace, range: 0...50, format: .pixels)
+                            SliderControl(label: "Turbulence", value: $viewModel.turbulence, range: 0...1, format: .percent)
+                            SliderControl(label: "Chroma Aberration", value: $viewModel.chromaAberration, range: 0...20, format: .pixels)
+                            
+                            // Quantization Chaos
+                            Text("Quantization Chaos")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary.opacity(0.8))
+                                .padding(.top, 12)
+                            
+                            SliderControl(label: "Bit Depth Chaos", value: $viewModel.bitDepthChaos, range: 0...1, format: .percent)
+                            SliderControl(label: "Palette Randomize", value: $viewModel.paletteRandomize, range: 0...1, format: .percent)
+                            
+                            // Reset Button
+                            Button(action: {
+                                withAnimation {
+                                    viewModel.resetChaosEffects()
+                                }
+                            }) {
+                                Text("Reset All Chaos")
+                                    .font(.system(size: 11))
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .controlSize(.small)
+                            .padding(.top, 12)
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 8)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .padding(12)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+                .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
+                
                 Spacer()
             }
             .padding(20)
         }
-        .background(.regularMaterial) // Native material background
-        .ignoresSafeArea(edges: .top) // Fix for titlebar gap
+        .background(.regularMaterial)
+        .ignoresSafeArea(edges: .top)
         .navigationTitle("iDither")
         .frame(minWidth: 280, maxWidth: .infinity, alignment: .leading)
         .toolbar {
@@ -216,7 +394,7 @@ struct SidebarView: View {
                 }
                 .help("Import Image")
                 
-                Button(action: { isExporting = true }) {
+                Button(action: { showExportOptions = true }) {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
                 .disabled(viewModel.processedImage == nil)
@@ -385,6 +563,80 @@ struct FloatingToolbar: View {
                 .stroke(.white.opacity(0.2), lineWidth: 1)
         )
         .shadow(radius: 5)
+    }
+}
+
+
+
+
+
+// Custom Modifier to handle Chaos/FX parameter observation
+// Extracts complexity from the main ContentView body to fix compiler type-check timeout
+struct ChaosEffectObserver: ViewModifier {
+    var viewModel: DitherViewModel
+    
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: viewModel.offsetJitter) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.patternRotation) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.errorAmplify) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.errorRandomness) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.thresholdNoise) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.waveDistortion) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.pixelDisplace) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.turbulence) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.chromaAberration) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.bitDepthChaos) { _, _ in viewModel.processImage() }
+            .onChange(of: viewModel.paletteRandomize) { _, _ in viewModel.processImage() }
+    }
+}
+
+extension View {
+    func onChaosChange(viewModel: DitherViewModel) -> some View {
+        self.modifier(ChaosEffectObserver(viewModel: viewModel))
+    }
+}
+
+struct SliderControl: View {
+    let label: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let format: ValueFormat
+    
+    enum ValueFormat {
+        case percent
+        case multiplier
+        case pixels
+        case raw
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 11))
+                Spacer()
+                Text(formattedValue)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: $value, in: range)
+                .tint(.accentColor)
+        }
+    }
+    
+    var formattedValue: String {
+        switch format {
+        case .percent:
+            return "\(Int(value * 100))%"
+        case .multiplier:
+            return String(format: "%.1f×", value)
+        case .pixels:
+            return "\(Int(value))px"
+        case .raw:
+            return String(format: "%.2f", value)
+        }
     }
 }
 

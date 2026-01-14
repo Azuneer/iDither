@@ -2,13 +2,163 @@
 using namespace metal;
 
 struct RenderParameters {
+    // Existing parameters
     float brightness;
     float contrast;
     float pixelScale;
-    float colorDepth; // New parameter: 1.0 to 32.0 (Levels)
-    int algorithm; // 0: None, 1: Bayer 2x2, 2: Bayer 4x4, 3: Bayer 8x8, 4: Cluster 4x4, 5: Cluster 8x8, 6: Blue Noise
+    float colorDepth;
+    int algorithm; // 0: None, 1: Bayer 2x2, 2: Bayer 4x4, 3: Bayer 8x8, 4: Cluster 4x4, 5: Cluster 8x8, 6: Blue Noise, 7: Floyd-Steinberg
     int isGrayscale;
+    
+    // CHAOS / FX PARAMETERS
+    float offsetJitter;        // 0.0 to 1.0
+    float patternRotation;     // 0.0 to 1.0
+    
+    float errorAmplify;        // 0.5 to 3.0 (1.0 = normal)
+    float errorRandomness;     // 0.0 to 1.0
+    
+    float thresholdNoise;      // 0.0 to 1.0
+    float waveDistortion;      // 0.0 to 1.0
+    
+    float pixelDisplace;       // 0.0 to 50.0 (pixels)
+    float turbulence;          // 0.0 to 1.0
+    float chromaAberration;    // 0.0 to 20.0 (pixels)
+    
+    float bitDepthChaos;       // 0.0 to 1.0
+    float paletteRandomize;    // 0.0 to 1.0
+    
+    uint randomSeed;
 };
+
+// ==================================================================================
+// CHAOS HELPER FUNCTIONS
+// ==================================================================================
+
+float random(float2 st, uint seed) {
+    return fract(sin(dot(st.xy + float2(seed * 0.001), float2(12.9898, 78.233))) * 43758.5453);
+}
+
+float2 random2(float2 st, uint seed) {
+    float2 s = float2(seed * 0.001, seed * 0.002);
+    return float2(
+        fract(sin(dot(st.xy + s, float2(12.9898, 78.233))) * 43758.5453),
+        fract(sin(dot(st.xy + s, float2(93.9898, 67.345))) * 23421.6312)
+    );
+}
+
+float noise(float2 st, uint seed) {
+    float2 i = floor(st);
+    float2 f = fract(st);
+    
+    float a = random(i, seed);
+    float b = random(i + float2(1.0, 0.0), seed);
+    float c = random(i + float2(0.0, 1.0), seed);
+    float d = random(i + float2(1.0, 1.0), seed);
+    
+    float2 u = f * f * (3.0 - 2.0 * f);
+    
+    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+}
+
+float2 applySpatialChaos(float2 coord, constant RenderParameters &params, uint2 gid) {
+    float2 chaosCoord = coord;
+    
+    if (params.pixelDisplace > 0.0) {
+        float2 offset = random2(coord * 0.01, params.randomSeed) - 0.5;
+        chaosCoord += offset * params.pixelDisplace;
+    }
+    
+    if (params.turbulence > 0.0) {
+        float scale = 0.05;
+        float offsetX = noise(coord * scale, params.randomSeed) * 2.0 - 1.0;
+        float offsetY = noise(coord * scale + float2(100.0), params.randomSeed) * 2.0 - 1.0;
+        chaosCoord += float2(offsetX, offsetY) * params.turbulence * 20.0;
+    }
+    
+    return chaosCoord;
+}
+
+float applyThresholdChaos(float threshold, float2 coord, constant RenderParameters &params) {
+    float chaosThreshold = threshold;
+    
+    if (params.thresholdNoise > 0.0) {
+        float noise = random(coord, params.randomSeed);
+        chaosThreshold = mix(chaosThreshold, noise, params.thresholdNoise);
+    }
+    
+    if (params.waveDistortion > 0.0) {
+        float wave = sin(coord.x * 0.1) * cos(coord.y * 0.1) * 0.5 + 0.5;
+        chaosThreshold = mix(chaosThreshold, wave, params.waveDistortion * 0.5);
+    }
+    
+    return chaosThreshold;
+}
+
+uint2 applyPatternChaos(uint2 matrixCoord, float2 pixelCoord, constant RenderParameters &params, uint matrixSize) {
+    uint2 chaosCoord = matrixCoord;
+    
+    if (params.offsetJitter > 0.0) {
+        float2 jitter = random2(pixelCoord * 0.1, params.randomSeed) * params.offsetJitter * float(matrixSize);
+        chaosCoord = uint2((float2(chaosCoord) + jitter)) % matrixSize;
+    }
+    
+    if (params.patternRotation > 0.0) {
+        float rotRandom = random(pixelCoord * 0.05, params.randomSeed);
+        if (rotRandom < params.patternRotation) {
+            uint temp = chaosCoord.x;
+            chaosCoord.x = matrixSize - 1 - chaosCoord.y;
+            chaosCoord.y = temp;
+        }
+    }
+    
+    return chaosCoord;
+}
+
+float3 applyChromaAberration(texture2d<float, access::read> inputTexture,
+                             float2 coord,
+                             float amount,
+                             uint2 texSize) {
+    if (amount == 0.0) {
+        uint2 pixelCoord = uint2(clamp(coord, float2(0), float2(texSize) - 1.0));
+        return inputTexture.read(pixelCoord).rgb;
+    }
+    
+    float2 redOffset = coord + float2(amount, 0);
+    float2 blueOffset = coord - float2(amount, 0);
+    
+    uint2 redCoord = uint2(clamp(redOffset, float2(0), float2(texSize) - 1.0));
+    uint2 greenCoord = uint2(clamp(coord, float2(0), float2(texSize) - 1.0));
+    uint2 blueCoord = uint2(clamp(blueOffset, float2(0), float2(texSize) - 1.0));
+    
+    float r = inputTexture.read(redCoord).r;
+    float g = inputTexture.read(greenCoord).g;
+    float b = inputTexture.read(blueCoord).b;
+    
+    return float3(r, g, b);
+}
+
+float applyQuantizationChaos(float value, float2 coord, constant RenderParameters &params) {
+    float chaosValue = value;
+    
+    if (params.bitDepthChaos > 0.0) {
+        float randVal = random(coord * 0.1, params.randomSeed);
+        if (randVal < params.bitDepthChaos) {
+            float reducedDepth = floor(randVal * 3.0) + 2.0;
+            chaosValue = floor(value * reducedDepth) / reducedDepth;
+        }
+    }
+    
+    if (params.paletteRandomize > 0.0) {
+        float randShift = (random(coord, params.randomSeed) - 0.5) * params.paletteRandomize;
+        chaosValue = clamp(value + randShift, 0.0, 1.0);
+    }
+    
+    return chaosValue;
+}
+
+// ==================================================================================
+// DITHERING MATRICES
+// ==================================================================================
 
 // Bayer 2x2 Matrix
 constant float bayer2x2[2][2] = {
@@ -69,11 +219,6 @@ constant float blueNoise8x8[8][8] = {
 };
 
 float ditherChannel(float value, float threshold, float limit) {
-    // Quantization Formula
-    // value: 0.0 to 1.0
-    // threshold: 0.0 to 1.0 (from matrix)
-    // limit: colorDepth (e.g. 4.0)
-    
     float ditheredValue = value + (threshold - 0.5) * (1.0 / (limit - 1.0));
     return floor(ditheredValue * (limit - 1.0) + 0.5) / (limit - 1.0);
 }
@@ -179,41 +324,31 @@ float getLuma(float3 rgb) {
 }
 
 // PASS 1: EVEN ROWS (Left -> Right)
-// - Reads original pixel
-// - Dithers it
-// - Writes result to outputTexture
-// - Writes RAW error 'diff' to errorTexture (at current coord) for Pass 2 to consume
 kernel void ditherShaderFS_Pass1(texture2d<float, access::read> inputTexture [[texture(0)]],
                                  texture2d<float, access::write> outputTexture [[texture(1)]],
                                  texture2d<float, access::write> errorTexture [[texture(2)]],
                                  constant RenderParameters &params [[buffer(0)]],
                                  uint2 gid [[thread_position_in_grid]]) {
     
-    // Dispatch: (1, height/2, 1). Each thread processes one FULL ROW.
-    uint y = gid.y * 2; // Pass 1 processes EVEN rows: 0, 2, 4...
-    
+    uint y = gid.y * 2;
     if (y >= inputTexture.get_height()) return;
     
     uint width = inputTexture.get_width();
-    float3 currentError = float3(0.0); // Error propagated from immediate Left neighbor
-    
-    // Scale handling (minimal implementation for now, usually FS runs 1:1)
-    // If pixel scale > 1, FS behaves weirdly unless we downsample/upsample.
-    // For now, let's treat FS as operating on the native coordinates (or scaled ones).
-    // The previous shader code did manual pixelation.
-    // To support `pixelScale`, we simply use the scaled coordinates for reading input,
-    // but we iterate 1:1 on output? No, if we pixelate, we want blocky dither?
-    // FS is hard to 'blocky' dither without pre-scaling.
-    // Let's stick to 1:1 processing for the error diffusion logic itself.
-    // But we read the input color from the "pixelated" coordinate.
+    float3 currentError = float3(0.0);
     
     float scale = max(1.0, params.pixelScale);
     
     for (uint x = 0; x < width; x++) {
         uint2 coords = uint2(x, y);
         
-        // Pixelate Input Read
+        // Pixelate Input Read with Chaos
         uint2 mappedCoords = uint2(floor(float(x) / scale) * scale, floor(float(y) / scale) * scale);
+        
+        if (params.pixelDisplace > 0.0 || params.turbulence > 0.0) {
+             float2 chaosC = applySpatialChaos(float2(mappedCoords), params, coords);
+             mappedCoords = uint2(clamp(chaosC, float2(0), float2(inputTexture.get_width()-1, inputTexture.get_height()-1)));
+        }
+        
         mappedCoords.x = min(mappedCoords.x, inputTexture.get_width() - 1);
         mappedCoords.y = min(mappedCoords.y, inputTexture.get_height() - 1);
 
@@ -230,16 +365,23 @@ kernel void ditherShaderFS_Pass1(texture2d<float, access::read> inputTexture [[t
             originalColor = float3(l);
         }
         
-        // ----------------------------------------------------
-        // ERROR DIFFUSION CORE
-        // ----------------------------------------------------
-        
-        // Add error from Left Neighbor (Pass 1 is L->R)
+        // Error Diffusion Core
         float3 pixelIn = originalColor + currentError;
         
+        // Apply Quantization Chaos
+        if (params.isGrayscale > 0) {
+            pixelIn.r = applyQuantizationChaos(pixelIn.r, float2(coords), params);
+            pixelIn.g = pixelIn.r;
+            pixelIn.b = pixelIn.r;
+        } else {
+             pixelIn.r = applyQuantizationChaos(pixelIn.r, float2(coords), params);
+             pixelIn.g = applyQuantizationChaos(pixelIn.g, float2(coords), params);
+             pixelIn.b = applyQuantizationChaos(pixelIn.b, float2(coords), params);
+        }
+
         // Quantize
         float3 pixelOut = float3(0.0);
-        float levels = max(1.0, params.colorDepth); // Ensure no div by zero
+        float levels = max(1.0, params.colorDepth);
         if (levels <= 1.0) levels = 2.0;
 
         pixelOut.r = floor(pixelIn.r * (levels - 1.0) + 0.5) / (levels - 1.0);
@@ -251,90 +393,93 @@ kernel void ditherShaderFS_Pass1(texture2d<float, access::read> inputTexture [[t
         // Calculate Error
         float3 diff = pixelIn - pixelOut;
         
-        // Store RAW error for Pass 2 (Row below) to read
-        // Note: we store 'diff', NOT the distributed parts. Pass 2 will calculate distribution.
+        // Chaos: Error Amplify
+        if (params.errorAmplify != 1.0) {
+            diff *= params.errorAmplify;
+        }
+        
+        // Store RAW error for Pass 2
         if (y + 1 < inputTexture.get_height()) {
             errorTexture.write(float4(diff, 1.0), coords);
         }
         
         outputTexture.write(float4(pixelOut, colorRaw.a), coords);
         
-        // Propagate to Right Neighbor (7/16)
-        currentError = diff * (7.0 / 16.0);
+        // Chaos: Error Randomness in Propagation
+        float weight = 7.0 / 16.0;
+        if (params.errorRandomness > 0.0) {
+             float r = random(float2(coords), params.randomSeed);
+             weight = mix(weight, r * 0.8, params.errorRandomness);
+        }
+        
+        currentError = diff * weight;
     }
 }
 
 // PASS 2: ODD ROWS (Right -> Left Serpentine)
-// - Reads original pixel
-// - Absorbs error from Row Above (which stored RAW diffs)
-// - Dithers
-// - Writes result
 kernel void ditherShaderFS_Pass2(texture2d<float, access::read> inputTexture [[texture(0)]],
                                  texture2d<float, access::write> outputTexture [[texture(1)]],
-                                 texture2d<float, access::read> errorTexture [[texture(2)]], // Contains diffs from Pass 1
+                                 texture2d<float, access::read> errorTexture [[texture(2)]],
                                  constant RenderParameters &params [[buffer(0)]],
                                  uint2 gid [[thread_position_in_grid]]) {
     
-    // Dispatch: (1, height/2, 1)
-    uint y = gid.y * 2 + 1; // Pass 2 processes ODD rows: 1, 3, 5...
-    
+    uint y = gid.y * 2 + 1;
     if (y >= inputTexture.get_height()) return;
     
     uint width = inputTexture.get_width();
-    float3 currentError = float3(0.0); // Error propagated from immediate Right neighbor (Serpentine R->L)
+    float3 currentError = float3(0.0);
     
     float scale = max(1.0, params.pixelScale);
     
-    // Serpentine: Iterate Right to Left
     for (int x_int = int(width) - 1; x_int >= 0; x_int--) {
         uint x = uint(x_int);
         uint2 coords = uint2(x, y);
         
-        // 1. Calculate Incoming Error from Row Above (Even Row, L->R)
-        // Row Above is y-1. We are at x.
-        // Even Row (y-1) propagated error to us (y) via:
-        // - (x-1, y-1) sent 3/16 (Bottom Left) -> reaches ME at x if I am (x-1+1) = x. Correct.
-        // - (x,   y-1) sent 5/16 (Down)        -> reaches ME at x. Correct.
-        // - (x+1, y-1) sent 1/16 (Bottom Right)-> reaches ME at x. Correct.
-        
+        // 1. Calculate Incoming Error from Row Above
         float3 errorFromAbove = float3(0.0);
         uint prevY = y - 1;
         
-        // Read neighbor errors (and apply weights now)
+        // Weights
+        float w_tr = 3.0 / 16.0;
+        float w_t  = 5.0 / 16.0;
+        float w_tl = 1.0 / 16.0;
         
-        // From Top-Left (x-1, y-1): It pushed 3/16 to Bottom-Right (x) ? No.
-        // Standard FS (Left->Right scan):
-        // P(x, y) distributes:
-        // Right (x+1, y): 7/16
-        // Bottom-Left (x-1, y+1): 3/16
-        // Bottom (x, y+1): 5/16
-        // Bottom-Right (x+1, y+1): 1/16
+        // Chaos: Error Randomness
+        if (params.errorRandomness > 0.0) {
+            float r = random(float2(coords) + float2(10.0), params.randomSeed);
+            if (r < params.errorRandomness) {
+                 float r1 = random(float2(coords) + float2(1.0), params.randomSeed);
+                 float r2 = random(float2(coords) + float2(2.0), params.randomSeed);
+                 float r3 = random(float2(coords) + float2(3.0), params.randomSeed);
+                 float sum = r1 + r2 + r3 + 0.1;
+                 w_tr = r1 / sum;
+                 w_t  = r2 / sum;
+                 w_tl = r3 / sum;
+            }
+        }
         
-        // So, ME (x, y) receives from:
-        // (x+1, y-1) [Top Right]: sent 3/16 to its Bottom Left (which is ME).
-        // (x,   y-1) [Top]:       sent 5/16 to its Bottom (which is ME).
-        // (x-1, y-1) [Top Left]:  sent 1/16 to its Bottom Right (which is ME).
-        
-        // Read Top Right (x+1, prevY)
+        // Read neighbors
         if (x + 1 < width) {
             float3 e = errorTexture.read(uint2(x+1, prevY)).rgb;
-            errorFromAbove += e * (3.0 / 16.0);
+            errorFromAbove += e * w_tr;
         }
-        
-        // Read Top (x, prevY)
         {
             float3 e = errorTexture.read(uint2(x, prevY)).rgb;
-            errorFromAbove += e * (5.0 / 16.0);
+            errorFromAbove += e * w_t;
         }
-        
-        // Read Top Left (x-1, prevY)
         if (x >= 1) {
             float3 e = errorTexture.read(uint2(x-1, prevY)).rgb;
-            errorFromAbove += e * (1.0 / 16.0);
+            errorFromAbove += e * w_tl;
         }
         
         // 2. Read Pixel
         uint2 mappedCoords = uint2(floor(float(x) / scale) * scale, floor(float(y) / scale) * scale);
+        
+        if (params.pixelDisplace > 0.0 || params.turbulence > 0.0) {
+             float2 chaosC = applySpatialChaos(float2(mappedCoords), params, coords);
+             mappedCoords = uint2(clamp(chaosC, float2(0), float2(inputTexture.get_width()-1, inputTexture.get_height()-1)));
+        }
+        
         mappedCoords.x = min(mappedCoords.x, inputTexture.get_width() - 1);
         mappedCoords.y = min(mappedCoords.y, inputTexture.get_height() - 1);
         
@@ -352,6 +497,16 @@ kernel void ditherShaderFS_Pass2(texture2d<float, access::read> inputTexture [[t
         float3 pixelIn = originalColor + currentError + errorFromAbove;
         
         // 4. Quantize
+        if (params.isGrayscale > 0) {
+            pixelIn.r = applyQuantizationChaos(pixelIn.r, float2(coords), params);
+            pixelIn.g = pixelIn.r;
+            pixelIn.b = pixelIn.r;
+        } else {
+             pixelIn.r = applyQuantizationChaos(pixelIn.r, float2(coords), params);
+             pixelIn.g = applyQuantizationChaos(pixelIn.g, float2(coords), params);
+             pixelIn.b = applyQuantizationChaos(pixelIn.b, float2(coords), params);
+        }
+
         float3 pixelOut = float3(0.0);
         float levels = max(1.0, params.colorDepth);
         if (levels <= 1.0) levels = 2.0;
@@ -361,15 +516,20 @@ kernel void ditherShaderFS_Pass2(texture2d<float, access::read> inputTexture [[t
         pixelOut.b = floor(pixelIn.b * (levels - 1.0) + 0.5) / (levels - 1.0);
         pixelOut = clamp(pixelOut, 0.0, 1.0);
         
-        // 5. Diff
+        // 5. Diff & Propagate
         float3 diff = pixelIn - pixelOut;
+        if (params.errorAmplify != 1.0) {
+            diff *= params.errorAmplify;
+        }
         
         outputTexture.write(float4(pixelOut, colorRaw.a), coords);
         
-        // 6. Propagate Horizontally (Serpentine R->L)
-        // In R->L scan, 'Right' neighbor in FS diagram is actually 'Left' neighbor in spatial.
-        // We push 7/16 to the next pixel we visit (x-1).
-        currentError = diff * (7.0 / 16.0);
+        float weight = 7.0 / 16.0;
+        if (params.errorRandomness > 0.0) {
+             float r = random(float2(coords), params.randomSeed);
+             weight = mix(weight, r * 0.8, params.errorRandomness);
+        }
+        currentError = diff * weight;
     }
 }
 

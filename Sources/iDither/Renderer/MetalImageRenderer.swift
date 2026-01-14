@@ -6,9 +6,28 @@ struct RenderParameters {
     var brightness: Float
     var contrast: Float
     var pixelScale: Float
-    var colorDepth: Float // New parameter
-    var algorithm: Int32 // 0: None, 1: Bayer 8x8, 2: Bayer 4x4
-    var isGrayscale: Int32 // 0: false, 1: true
+    var colorDepth: Float
+    var algorithm: Int32
+    var isGrayscale: Int32
+    
+    // CHAOS / FX PARAMETERS
+    var offsetJitter: Float
+    var patternRotation: Float
+    
+    var errorAmplify: Float
+    var errorRandomness: Float
+    
+    var thresholdNoise: Float
+    var waveDistortion: Float
+    
+    var pixelDisplace: Float
+    var turbulence: Float
+    var chromaAberration: Float
+    
+    var bitDepthChaos: Float
+    var paletteRandomize: Float
+    
+    var randomSeed: UInt32
 }
 
 final class MetalImageRenderer: Sendable {
