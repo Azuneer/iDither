@@ -1,15 +1,17 @@
 import SwiftUI
-import Combine
+import CoreGraphics
+import ImageIO
 
 enum DitherAlgorithm: Int, CaseIterable, Identifiable {
-    case none = 0
+    case noDither = 0
     case bayer8x8 = 1
     case bayer4x4 = 2
     
     var id: Int { rawValue }
+    
     var name: String {
         switch self {
-        case .none: return "No Dither"
+        case .noDither: return "No Dither"
         case .bayer8x8: return "Bayer 8x8"
         case .bayer4x4: return "Bayer 4x4"
         }
@@ -21,60 +23,68 @@ enum DitherAlgorithm: Int, CaseIterable, Identifiable {
 class DitherViewModel {
     var inputImage: CGImage?
     var processedImage: CGImage?
+    var inputImageId: UUID = UUID() // Unique ID to track when a NEW file is loaded
     
-    var brightness: Float = 0.0
-    var contrast: Float = 1.0
-    var pixelScale: Float = 1.0
-    var selectedAlgorithm: DitherAlgorithm = .none
+    // Parameters
+    var brightness: Double = 0.0
+    var contrast: Double = 1.0
+    var pixelScale: Double = 4.0
+    var selectedAlgorithm: DitherAlgorithm = .bayer8x8
     var isGrayscale: Bool = false
     
-    private let renderer: MetalImageRenderer?
-    private var processingTask: Task<Void, Never>?
+    private let renderer = MetalImageRenderer()
+    private var renderTask: Task<Void, Never>?
     
-    init() {
-        self.renderer = MetalImageRenderer()
-    }
+    init() {}
     
     func load(url: URL) {
-        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
-            print("Failed to load image")
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            print("Failed to load image from \(url)")
             return
         }
         
         self.inputImage = cgImage
-        processImage()
+        self.inputImageId = UUID() // Signal that a new image has been loaded
+        self.processImage()
     }
     
     func processImage() {
-        guard let inputImage = inputImage, let renderer = renderer else { return }
+        guard let input = inputImage, let renderer = renderer else { return }
         
-        processingTask?.cancel()
+        // Cancel previous task to prevent UI freezing and Metal overload
+        renderTask?.cancel()
         
         let params = RenderParameters(
-            brightness: brightness,
-            contrast: contrast,
-            pixelScale: pixelScale,
+            brightness: Float(brightness),
+            contrast: Float(contrast),
+            pixelScale: Float(pixelScale),
             algorithm: Int32(selectedAlgorithm.rawValue),
             isGrayscale: isGrayscale ? 1 : 0
         )
         
-        processingTask = Task.detached(priority: .userInitiated) { [inputImage, renderer, params] in
-            if let result = renderer.render(input: inputImage, params: params) {
-                await MainActor.run {
-                    self.processedImage = result
-                }
+        renderTask = Task.detached(priority: .userInitiated) { [input, renderer, params] in
+            if Task.isCancelled { return }
+            
+            let result = renderer.render(input: input, params: params)
+            
+            if Task.isCancelled { return }
+            
+            await MainActor.run {
+                self.processedImage = result
             }
         }
     }
     
     func exportResult(to url: URL) {
-        guard let processedImage = processedImage,
-              let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+        guard let image = processedImage else { return }
+        
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+            print("Failed to create image destination")
             return
         }
         
-        CGImageDestinationAddImage(destination, processedImage, nil)
+        CGImageDestinationAddImage(destination, image, nil)
         CGImageDestinationFinalize(destination)
     }
 }
