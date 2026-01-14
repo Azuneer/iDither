@@ -5,6 +5,7 @@ struct RenderParameters {
     float brightness;
     float contrast;
     float pixelScale;
+    float colorDepth; // New parameter: 1.0 to 32.0 (Levels)
     int algorithm; // 0: None, 1: Bayer 2x2, 2: Bayer 4x4, 3: Bayer 8x8, 4: Cluster 4x4, 5: Cluster 8x8, 6: Blue Noise
     int isGrayscale;
 };
@@ -67,6 +68,16 @@ constant float blueNoise8x8[8][8] = {
     {35.0/64.0, 24.0/64.0,  0.0/64.0, 41.0/64.0, 15.0/64.0, 52.0/64.0, 20.0/64.0, 37.0/64.0}
 };
 
+float ditherChannel(float value, float threshold, float limit) {
+    // Quantization Formula
+    // value: 0.0 to 1.0
+    // threshold: 0.0 to 1.0 (from matrix)
+    // limit: colorDepth (e.g. 4.0)
+    
+    float ditheredValue = value + (threshold - 0.5) * (1.0 / (limit - 1.0));
+    return floor(ditheredValue * (limit - 1.0) + 0.5) / (limit - 1.0);
+}
+
 kernel void ditherShader(texture2d<float, access::read> inputTexture [[texture(0)]],
                          texture2d<float, access::write> outputTexture [[texture(1)]],
                          constant RenderParameters &params [[buffer(0)]],
@@ -104,6 +115,7 @@ kernel void ditherShader(texture2d<float, access::read> inputTexture [[texture(0
     if (shouldDither) {
         uint x, y;
         
+        // Fetch threshold from matrix
         switch (params.algorithm) {
             case 1: // Bayer 2x2
                 x = uint(sourceCoord.x / scale) % 2;
@@ -139,7 +151,18 @@ kernel void ditherShader(texture2d<float, access::read> inputTexture [[texture(0
                 break;
         }
         
-        rgb = (luma > threshold) ? float3(1.0) : float3(0.0);
+        // Apply Quantized Dithering
+        if (params.isGrayscale > 0) {
+            // Apply only to luma (which is already in rgb)
+            rgb.r = ditherChannel(rgb.r, threshold, params.colorDepth);
+            rgb.g = rgb.r;
+            rgb.b = rgb.r;
+        } else {
+            // Apply to each channel
+            rgb.r = ditherChannel(rgb.r, threshold, params.colorDepth);
+            rgb.g = ditherChannel(rgb.g, threshold, params.colorDepth);
+            rgb.b = ditherChannel(rgb.b, threshold, params.colorDepth);
+        }
     }
     
     outputTexture.write(float4(rgb, color.a), gid);

@@ -20,6 +20,7 @@ struct ContentView: View {
         .onChange(of: viewModel.brightness) { _, _ in viewModel.processImage() }
         .onChange(of: viewModel.contrast) { _, _ in viewModel.processImage() }
         .onChange(of: viewModel.pixelScale) { _, _ in viewModel.processImage() }
+        .onChange(of: viewModel.colorDepth) { _, _ in viewModel.processImage() }
         .onChange(of: viewModel.selectedAlgorithm) { _, _ in viewModel.processImage() }
         .onChange(of: viewModel.isGrayscale) { _, _ in viewModel.processImage() }
         // File Importer at the very top level
@@ -142,6 +143,17 @@ struct SidebarView: View {
                             .foregroundStyle(.secondary)
                     }
                     Slider(value: $viewModel.pixelScale, in: 1.0...20.0, step: 1.0)
+                }
+                
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text("Color Depth")
+                        Spacer()
+                        Text("\(Int(viewModel.colorDepth))")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $viewModel.colorDepth, in: 1.0...32.0, step: 1.0)
                 }
             }
         }

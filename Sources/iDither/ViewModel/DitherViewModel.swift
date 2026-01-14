@@ -37,7 +37,8 @@ class DitherViewModel {
     var brightness: Double = 0.0
     var contrast: Double = 1.0
     var pixelScale: Double = 4.0
-    var selectedAlgorithm: DitherAlgorithm = .bayer4x4 // Default to Balanced
+    var colorDepth: Double = 4.0 // Default to 4 levels
+    var selectedAlgorithm: DitherAlgorithm = .bayer4x4
     var isGrayscale: Bool = false
     
     private let renderer = MetalImageRenderer()
@@ -67,6 +68,7 @@ class DitherViewModel {
             brightness: Float(brightness),
             contrast: Float(contrast),
             pixelScale: Float(pixelScale),
+            colorDepth: Float(colorDepth),
             algorithm: Int32(selectedAlgorithm.rawValue),
             isGrayscale: isGrayscale ? 1 : 0
         )

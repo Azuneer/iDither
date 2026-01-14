@@ -6,6 +6,7 @@ struct RenderParameters {
     var brightness: Float
     var contrast: Float
     var pixelScale: Float
+    var colorDepth: Float // New parameter
     var algorithm: Int32 // 0: None, 1: Bayer 8x8, 2: Bayer 4x4
     var isGrayscale: Int32 // 0: false, 1: true
 }
