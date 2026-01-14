@@ -1,0 +1,28 @@
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# --- Xcode ---
+DerivedData/
+build/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# --- Swift Package Manager (SPM) ---
+.build/
+.swiftpm/
+Packages/
+
+# --- Metal ---
+*.metallib
+*.air
+
+# --- Autres ---
+*.swp
+*~
