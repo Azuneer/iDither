@@ -343,7 +343,7 @@ struct SidebarView: View {
                                 .foregroundStyle(.secondary.opacity(0.8))
                                 .padding(.top, 12)
                             
-                            SliderControl(label: "Pixel Displace", value: $viewModel.pixelDisplace, range: 0...50, format: .pixels)
+                            SliderControl(label: "Pixel Displace", value: $viewModel.pixelDisplace, range: 0...100, format: .pixels)
                             SliderControl(label: "Turbulence", value: $viewModel.turbulence, range: 0...1, format: .percent)
                             SliderControl(label: "Chroma Aberration", value: $viewModel.chromaAberration, range: 0...20, format: .pixels)
                             
@@ -378,6 +378,16 @@ struct SidebarView: View {
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(8)
                 .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
+                
+                #if DEBUG
+                Button("Force Refresh (Debug)") {
+                    viewModel.forceRefresh()
+                }
+                .font(.caption)
+                .foregroundStyle(.red)
+                .buttonStyle(.plain)
+                .padding(.leading, 4)
+                #endif
                 
                 Spacer()
             }

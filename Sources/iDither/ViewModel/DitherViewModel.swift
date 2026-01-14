@@ -60,6 +60,7 @@ class DitherViewModel {
     
     private let renderer = MetalImageRenderer()
     private var renderTask: Task<Void, Never>?
+    private var renderDebounceTask: Task<Void, Never>?
     
     init() {}
     
@@ -78,59 +79,120 @@ class DitherViewModel {
         processImage()
     }
     
-    func load(url: URL) {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-            print("Failed to load image from \(url)")
+    func forceRefresh() {
+        print("🔄 Force refresh triggered")
+        guard let _ = inputImage else {
+            print("⚠️ No input image to refresh")
             return
         }
         
-        self.inputImage = cgImage
+        // Clear everything
+        renderDebounceTask?.cancel()
+        renderDebounceTask = nil
+        renderTask?.cancel()
+        renderTask = nil
+        processedImage = nil
+        
+        // Wait a frame
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
+            self.processImage()
+        }
+    }
+    
+    func load(url: URL) {
+        // Cancel all tasks
+        renderTask?.cancel()
+        renderTask = nil
+        renderDebounceTask?.cancel()
+        renderDebounceTask = nil
+        
+        // CRITICAL: Clear old images to release memory
+        processedImage = nil
+        inputImage = nil
+        
+        // Force memory cleanup and load new image
+        autoreleasepool {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                print("Failed to load image from \(url)")
+                return
+            }
+            
+            self.inputImage = cgImage
+        }
+        
         self.inputImageId = UUID() // Signal that a new image has been loaded
-        self.processImage()
+        
+        // Small delay to ensure UI updates
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
+            self.processImage()
+        }
     }
     
     func processImage() {
         guard let input = inputImage, let renderer = renderer else { return }
         
-        // Cancel previous task to prevent UI freezing and Metal overload
-        renderTask?.cancel()
+        // Cancel previous debounce
+        renderDebounceTask?.cancel()
         
-        // Generate a random seed for consistent chaos per frame/update
-        let seed = UInt32.random(in: 0...UInt32.max)
-        
-        let params = RenderParameters(
-            brightness: Float(brightness),
-            contrast: Float(contrast),
-            pixelScale: Float(pixelScale),
-            colorDepth: Float(colorDepth),
-            algorithm: Int32(selectedAlgorithm.rawValue),
-            isGrayscale: isGrayscale ? 1 : 0,
-            
-            // Chaos Params
-            offsetJitter: Float(offsetJitter),
-            patternRotation: Float(patternRotation),
-            errorAmplify: Float(errorAmplify),
-            errorRandomness: Float(errorRandomness),
-            thresholdNoise: Float(thresholdNoise),
-            waveDistortion: Float(waveDistortion),
-            pixelDisplace: Float(pixelDisplace),
-            turbulence: Float(turbulence),
-            chromaAberration: Float(chromaAberration),
-            bitDepthChaos: Float(bitDepthChaos),
-            paletteRandomize: Float(paletteRandomize),
-            randomSeed: seed
-        )
-        
-        renderTask = Task.detached(priority: .userInitiated) { [input, renderer, params] in
-            if Task.isCancelled { return }
-            
-            let result = renderer.render(input: input, params: params)
+        // Debounce rapid parameter changes
+        renderDebounceTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50)) // 50ms debounce
             
             if Task.isCancelled { return }
             
-            await MainActor.run {
-                self.processedImage = result
+            // Cancel previous render task
+            self.renderTask?.cancel()
+            self.renderTask = nil
+            
+            // Generate a random seed for consistent chaos per frame/update
+            let seed = UInt32.random(in: 0...UInt32.max)
+            
+            let params = RenderParameters(
+                brightness: Float(self.brightness),
+                contrast: Float(self.contrast),
+                pixelScale: Float(self.pixelScale),
+                colorDepth: Float(self.colorDepth),
+                algorithm: Int32(self.selectedAlgorithm.rawValue),
+                isGrayscale: self.isGrayscale ? 1 : 0,
+                
+                // Chaos Params
+                offsetJitter: Float(self.offsetJitter),
+                patternRotation: Float(self.patternRotation),
+                errorAmplify: Float(self.errorAmplify),
+                errorRandomness: Float(self.errorRandomness),
+                thresholdNoise: Float(self.thresholdNoise),
+                waveDistortion: Float(self.waveDistortion),
+                pixelDisplace: Float(self.pixelDisplace),
+                turbulence: Float(self.turbulence),
+                chromaAberration: Float(self.chromaAberration),
+                bitDepthChaos: Float(self.bitDepthChaos),
+                paletteRandomize: Float(self.paletteRandomize),
+                randomSeed: seed
+            )
+            
+            print("🔄 Processing image with algorithm: \(self.selectedAlgorithm.name)")
+            
+            self.renderTask = Task.detached(priority: .userInitiated) { [input, renderer, params] in
+                if Task.isCancelled {
+                    print("⚠️ Render task cancelled before starting")
+                    return
+                }
+                
+                let result = renderer.render(input: input, params: params)
+                
+                if Task.isCancelled {
+                    print("⚠️ Render task cancelled after render")
+                    return
+                }
+                
+                await MainActor.run {
+                    if Task.isCancelled { return }
+                    print("✅ Render complete, updating UI")
+                    self.processedImage = result
+                }
             }
         }
     }

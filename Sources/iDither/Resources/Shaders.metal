@@ -65,14 +65,14 @@ float2 applySpatialChaos(float2 coord, constant RenderParameters &params, uint2 
     
     if (params.pixelDisplace > 0.0) {
         float2 offset = random2(coord * 0.01, params.randomSeed) - 0.5;
-        chaosCoord += offset * params.pixelDisplace;
+        chaosCoord += offset * params.pixelDisplace * 2.0;
     }
     
     if (params.turbulence > 0.0) {
-        float scale = 0.05;
+        float scale = 0.02;
         float offsetX = noise(coord * scale, params.randomSeed) * 2.0 - 1.0;
         float offsetY = noise(coord * scale + float2(100.0), params.randomSeed) * 2.0 - 1.0;
-        chaosCoord += float2(offsetX, offsetY) * params.turbulence * 20.0;
+        chaosCoord += float2(offsetX, offsetY) * params.turbulence * 50.0;
     }
     
     return chaosCoord;
@@ -123,8 +123,8 @@ float3 applyChromaAberration(texture2d<float, access::read> inputTexture,
         return inputTexture.read(pixelCoord).rgb;
     }
     
-    float2 redOffset = coord + float2(amount, 0);
-    float2 blueOffset = coord - float2(amount, 0);
+    float2 redOffset = coord + float2(amount, amount * 0.5);
+    float2 blueOffset = coord - float2(amount, amount * 0.5);
     
     uint2 redCoord = uint2(clamp(redOffset, float2(0), float2(texSize) - 1.0));
     uint2 greenCoord = uint2(clamp(coord, float2(0), float2(texSize) - 1.0));
@@ -141,15 +141,15 @@ float applyQuantizationChaos(float value, float2 coord, constant RenderParameter
     float chaosValue = value;
     
     if (params.bitDepthChaos > 0.0) {
-        float randVal = random(coord * 0.1, params.randomSeed);
+        float randVal = random(coord * 0.05, params.randomSeed);
         if (randVal < params.bitDepthChaos) {
-            float reducedDepth = floor(randVal * 3.0) + 2.0;
+            float reducedDepth = floor(randVal * 1.5) + 2.0;
             chaosValue = floor(value * reducedDepth) / reducedDepth;
         }
     }
     
     if (params.paletteRandomize > 0.0) {
-        float randShift = (random(coord, params.randomSeed) - 0.5) * params.paletteRandomize;
+        float randShift = (random(coord, params.randomSeed) - 0.5) * params.paletteRandomize * 0.5;
         chaosValue = clamp(value + randShift, 0.0, 1.0);
     }
     
@@ -409,7 +409,13 @@ kernel void ditherShaderFS_Pass1(texture2d<float, access::read> inputTexture [[t
         float weight = 7.0 / 16.0;
         if (params.errorRandomness > 0.0) {
              float r = random(float2(coords), params.randomSeed);
-             weight = mix(weight, r * 0.8, params.errorRandomness);
+             if (r < params.errorRandomness * 1.5) {
+                float r1 = random(float2(coords) + float2(1.0), params.randomSeed);
+                float r2 = random(float2(coords) + float2(2.0), params.randomSeed);
+                r1 = pow(r1, 0.5);
+                r2 = pow(r2, 0.5);
+                weight = mix(weight, r1, params.errorRandomness);
+             }
         }
         
         currentError = diff * weight;
@@ -447,11 +453,18 @@ kernel void ditherShaderFS_Pass2(texture2d<float, access::read> inputTexture [[t
         // Chaos: Error Randomness
         if (params.errorRandomness > 0.0) {
             float r = random(float2(coords) + float2(10.0), params.randomSeed);
-            if (r < params.errorRandomness) {
+            if (r < params.errorRandomness * 1.5) {
                  float r1 = random(float2(coords) + float2(1.0), params.randomSeed);
                  float r2 = random(float2(coords) + float2(2.0), params.randomSeed);
                  float r3 = random(float2(coords) + float2(3.0), params.randomSeed);
-                 float sum = r1 + r2 + r3 + 0.1;
+                 float r4 = random(float2(coords) + float2(4.0), params.randomSeed);
+                 
+                 r1 = pow(r1, 0.5);
+                 r2 = pow(r2, 0.5);
+                 r3 = pow(r3, 0.5);
+                 r4 = pow(r4, 0.5);
+                 
+                 float sum = r1 + r2 + r3 + r4 + 0.001;
                  w_tr = r1 / sum;
                  w_t  = r2 / sum;
                  w_tl = r3 / sum;
