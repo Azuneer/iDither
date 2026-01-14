@@ -15,6 +15,7 @@ struct iDitherApp: App {
                     }
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
     }
 }

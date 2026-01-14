@@ -15,6 +15,8 @@ final class MetalImageRenderer: Sendable {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLComputePipelineState
+    private let pipelineStateFS_Pass1: MTLComputePipelineState?
+    private let pipelineStateFS_Pass2: MTLComputePipelineState?
     
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(),
@@ -29,6 +31,15 @@ final class MetalImageRenderer: Sendable {
         
         do {
             self.pipelineState = try device.makeComputePipelineState(function: function)
+            // Load FS Kernels
+            if let f1 = library.makeFunction(name: "ditherShaderFS_Pass1"),
+               let f2 = library.makeFunction(name: "ditherShaderFS_Pass2") {
+                self.pipelineStateFS_Pass1 = try device.makeComputePipelineState(function: f1)
+                self.pipelineStateFS_Pass2 = try device.makeComputePipelineState(function: f2)
+            } else {
+                self.pipelineStateFS_Pass1 = nil
+                self.pipelineStateFS_Pass2 = nil
+            }
         } catch {
             print("Failed to create pipeline state: \(error)")
             return nil
@@ -60,26 +71,68 @@ final class MetalImageRenderer: Sendable {
             return nil
         }
         
-        computeEncoder.setComputePipelineState(pipelineState)
-        computeEncoder.setTexture(inputTexture, index: 0)
-        computeEncoder.setTexture(outputTexture, index: 1)
-        
         var params = params
-        computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
         
-        let w = pipelineState.threadExecutionWidth
-        let h = pipelineState.maxTotalThreadsPerThreadgroup / w
-        let threadsPerThreadgroup = MTLSizeMake(w, h, 1)
-        let threadsPerGrid = MTLSizeMake(inputTexture.width, inputTexture.height, 1)
-        
-        computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        if params.algorithm == 7, let pipe1 = pipelineStateFS_Pass1, let pipe2 = pipelineStateFS_Pass2 {
+            // FLOYD-STEINBERG MULTI-PASS
+            
+            // Create Error Texture (Float16 or Float32 for precision)
+            let errorDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float,
+                                                                     width: inputTexture.width,
+                                                                     height: inputTexture.height,
+                                                                     mipmapped: false)
+            errorDesc.usage = [.shaderWrite, .shaderRead]
+            guard let errorTexture = device.makeTexture(descriptor: errorDesc) else {
+                 computeEncoder.endEncoding()
+                 return nil
+            }
+            
+            // PASS 1: Even Rows
+            computeEncoder.setComputePipelineState(pipe1)
+            computeEncoder.setTexture(inputTexture, index: 0)
+            computeEncoder.setTexture(outputTexture, index: 1)
+            computeEncoder.setTexture(errorTexture, index: 2)
+            computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
+            
+            // Dispatch (1, H/2, 1) -> Each thread handles one full row
+            let h = (inputTexture.height + 1) / 2
+            let threadsPerGrid = MTLSizeMake(1, h, 1)
+            let threadsPerThreadgroup = MTLSizeMake(1, min(h, pipe1.maxTotalThreadsPerThreadgroup), 1)
+            
+            computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+            
+            // Memory Barrier (Ensure Pass 1 writes are visible to Pass 2)
+            computeEncoder.memoryBarrier(scope: .textures)
+            
+            // PASS 2: Odd Rows
+            computeEncoder.setComputePipelineState(pipe2)
+            computeEncoder.setTexture(inputTexture, index: 0)
+            computeEncoder.setTexture(outputTexture, index: 1)
+            computeEncoder.setTexture(errorTexture, index: 2)
+            computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
+            
+            computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+            
+        } else {
+            // STANDARD ALGORITHMS
+            computeEncoder.setComputePipelineState(pipelineState)
+            computeEncoder.setTexture(inputTexture, index: 0)
+            computeEncoder.setTexture(outputTexture, index: 1)
+            computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
+            
+            let w = pipelineState.threadExecutionWidth
+            let h = pipelineState.maxTotalThreadsPerThreadgroup / w
+            let threadsPerThreadgroup = MTLSizeMake(w, h, 1)
+            let threadsPerGrid = MTLSizeMake(inputTexture.width, inputTexture.height, 1)
+            
+            computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+        }
+
         computeEncoder.endEncoding()
         
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
         
-        // Convert back to CGImage (for simplicity in this iteration, though MTKView is better for display)
-        // We will use a helper to convert MTLTexture to CGImage
         return createCGImage(from: outputTexture)
     }
     

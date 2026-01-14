@@ -10,6 +10,7 @@ enum DitherAlgorithm: Int, CaseIterable, Identifiable {
     case cluster4x4 = 4
     case cluster8x8 = 5
     case blueNoise = 6
+    case floydSteinberg = 7
     
     var id: Int { rawValue }
     
@@ -22,6 +23,7 @@ enum DitherAlgorithm: Int, CaseIterable, Identifiable {
         case .cluster4x4: return "Cluster 4x4 (Vintage)"
         case .cluster8x8: return "Cluster 8x8 (Soft)"
         case .blueNoise: return "Blue Noise / Organic (Best Quality)"
+        case .floydSteinberg: return "Floyd-Steinberg (Error Diffusion)"
         }
     }
 }

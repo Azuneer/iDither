@@ -9,7 +9,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView(viewModel: viewModel, isImporting: $isImporting, isExporting: $isExporting)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 300)
+                .navigationSplitViewColumnWidth(min: 280, ideal: 300)
         } detail: {
             DetailView(viewModel: viewModel, loadFromProviders: loadFromProviders)
         }
@@ -100,66 +100,115 @@ struct SidebarView: View {
     @Binding var isExporting: Bool
     
     var body: some View {
-        Form {
-            Section("Dithering Algorithm") {
-                Picker("Algorithm", selection: $viewModel.selectedAlgorithm) {
-                    ForEach(DitherAlgorithm.allCases) { algo in
-                        Text(algo.name).tag(algo)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                
+                // --- ALGORITHM SECTION ---
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("ALGORITHM")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                    
+                    Picker("Algorithm", selection: $viewModel.selectedAlgorithm) {
+                        ForEach(DitherAlgorithm.allCases) { algo in
+                            Text(algo.name).tag(algo)
+                        }
+                    }
+                    .labelsHidden() // Native look: just the dropdown
+                    
+                    Toggle("Grayscale / 1-bit", isOn: $viewModel.isGrayscale)
+                        .toggleStyle(.switch)
+                        .padding(.top, 4)
+                }
+                
+                Divider()
+                    .padding(.vertical, 8)
+                
+                // --- PRE-PROCESSING SECTION ---
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("PRE-PROCESSING")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    
+                    // Brightness slider
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("Brightness")
+                                .font(.system(size: 13))
+                            Spacer()
+                            Text(String(format: "%.2f", viewModel.brightness))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $viewModel.brightness, in: -1.0...1.0)
+                            .tint(.accentColor)
+                    }
+                    
+                    // Contrast slider
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("Contrast")
+                                .font(.system(size: 13))
+                            Spacer()
+                            Text(String(format: "%.2f", viewModel.contrast))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $viewModel.contrast, in: 0.0...4.0)
+                            .tint(.accentColor)
+                    }
+                    
+                    // Pixel Scale slider
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("Pixel Scale")
+                                .font(.system(size: 13))
+                            Spacer()
+                            Text("\(Int(viewModel.pixelScale))x")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $viewModel.pixelScale, in: 1.0...20.0, step: 1.0)
+                            .tint(.accentColor)
                     }
                 }
                 
-                Toggle("Grayscale / 1-bit", isOn: $viewModel.isGrayscale)
+                Divider()
+                    .padding(.vertical, 8)
+                
+                // --- QUANTIZATION SECTION ---
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("QUANTIZATION")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("Color Depth")
+                                .font(.system(size: 13))
+                            Spacer()
+                            Text("\(Int(viewModel.colorDepth))")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $viewModel.colorDepth, in: 1.0...32.0, step: 1.0)
+                            .tint(.accentColor)
+                    }
+                }
+                
+                Spacer()
             }
-            
-            Section("Pre-Processing") {
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("Brightness")
-                        Spacer()
-                        Text(String(format: "%.2f", viewModel.brightness))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $viewModel.brightness, in: -1.0...1.0)
-                }
-                
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("Contrast")
-                        Spacer()
-                        Text(String(format: "%.2f", viewModel.contrast))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $viewModel.contrast, in: 0.0...4.0)
-                }
-                
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("Pixel Scale")
-                        Spacer()
-                        Text("\(Int(viewModel.pixelScale))x")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $viewModel.pixelScale, in: 1.0...20.0, step: 1.0)
-                }
-                
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("Color Depth")
-                        Spacer()
-                        Text("\(Int(viewModel.colorDepth))")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $viewModel.colorDepth, in: 1.0...32.0, step: 1.0)
-                }
-            }
+            .padding(20)
         }
-        .formStyle(.grouped)
-        .padding(.vertical)
+        .background(.regularMaterial) // Native material background
+        .ignoresSafeArea(edges: .top) // Fix for titlebar gap
         .navigationTitle("iDither")
+        .frame(minWidth: 280, maxWidth: .infinity, alignment: .leading)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button(action: { isImporting = true }) {
