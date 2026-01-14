@@ -4,16 +4,24 @@ import ImageIO
 
 enum DitherAlgorithm: Int, CaseIterable, Identifiable {
     case noDither = 0
-    case bayer8x8 = 1
+    case bayer2x2 = 1
     case bayer4x4 = 2
+    case bayer8x8 = 3
+    case cluster4x4 = 4
+    case cluster8x8 = 5
+    case blueNoise = 6
     
     var id: Int { rawValue }
     
     var name: String {
         switch self {
         case .noDither: return "No Dither"
-        case .bayer8x8: return "Bayer 8x8"
-        case .bayer4x4: return "Bayer 4x4"
+        case .bayer2x2: return "Bayer 2x2 (Retro)"
+        case .bayer4x4: return "Bayer 4x4 (Balanced)"
+        case .bayer8x8: return "Bayer 8x8 (Smooth)"
+        case .cluster4x4: return "Cluster 4x4 (Vintage)"
+        case .cluster8x8: return "Cluster 8x8 (Soft)"
+        case .blueNoise: return "Blue Noise / Organic (Best Quality)"
         }
     }
 }
@@ -29,7 +37,7 @@ class DitherViewModel {
     var brightness: Double = 0.0
     var contrast: Double = 1.0
     var pixelScale: Double = 4.0
-    var selectedAlgorithm: DitherAlgorithm = .bayer8x8
+    var selectedAlgorithm: DitherAlgorithm = .bayer4x4 // Default to Balanced
     var isGrayscale: Bool = false
     
     private let renderer = MetalImageRenderer()
