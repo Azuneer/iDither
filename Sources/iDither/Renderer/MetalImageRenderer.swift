@@ -105,7 +105,7 @@ final class MetalImageRenderer {
                 
                 var params = params
                 
-                if params.algorithm == 7, let pipe1 = pipelineStateFS_Pass1, let pipe2 = pipelineStateFS_Pass2 {
+                 if params.algorithm == 7, let pipe1 = pipelineStateFS_Pass1, let pipe2 = pipelineStateFS_Pass2 {
                     print("🔄 Using Floyd-Steinberg two-pass rendering")
                     
                     // FLOYD-STEINBERG MULTI-PASS
@@ -170,32 +170,21 @@ final class MetalImageRenderer {
                 computeEncoder.endEncoding()
                 
                 // Add completion handler properly inside the closure
-                commandBuffer.addCompletedHandler { buffer in
-                    // We must jump back to MainActor if we want to do UI stuff, but here we just process data.
-                    // However, continuation must be resumed.
-                    // Since the whole function is @MainActor, we should likely resume on main actor?
-                    // Actually, withCheckedContinuation handles the resume context automatically or acts as a bridge.
-                    // But to be safe and strict, let's keep it simple.
-                    
-                    if let error = buffer.error {
-                        print("❌ Metal command buffer error: \(error)")
-                        continuation.resume(returning: nil)
-                    } else {
-                        print("✅ Metal render completed successfully")
-                        // Texture -> CGImage conversion is fast enough to do here or dispatch to main
-                        // But since createCGImage creates data copies, it is safe.
-                        // We need the result.
-                        DispatchQueue.main.async {
-                            // We are back on main thread (required for MetalImageRenderer methods if isolated)
-                            // But wait, makeCGImage is private and inside this class.
-                            // If we call self.createCGImage here, we are inside a closure which is NOT isolated to MainActor by default unless specified.
-                            // Let's call a helper or do it carefully.
-                            
-                            // BETTER APPROACH:
-                            // Just resume with the texture or nil, and do conversion after await?
-                            // OR: perform conversion here.
-                            
-                            // Since `createCGImage` is private and self is MainActor, we must be on MainActor to call it.
+                commandBuffer.addCompletedHandler { [weak self] buffer in
+                    // CRITICAL: Dispatch back to MainActor because self (MetalImageRenderer) is isolated
+                    // and createCGImage is isolated to MainActor.
+                    Task { @MainActor in
+                        guard let self = self else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        
+                        if let error = buffer.error {
+                            print("❌ Metal command buffer error: \(error)")
+                            continuation.resume(returning: nil)
+                        } else {
+                            print("✅ Metal render completed successfully")
+                            // Now we are on MainActor, we can safely call self.createCGImage
                             let result = self.createCGImage(from: outputTexture)
                             if result == nil {
                                 print("❌ Failed to create CGImage from output texture")
