@@ -4,6 +4,11 @@ import ImageIO
 import AppKit
 import UniformTypeIdentifiers
 
+// Helper for Swift 6 Concurrency
+struct SendableCGImage: @unchecked Sendable {
+    let image: CGImage
+}
+
 enum DitherAlgorithm: Int, CaseIterable, Identifiable {
     case noDither = 0
     case bayer2x2 = 1
@@ -175,24 +180,26 @@ class DitherViewModel {
             
             print("🔄 Processing image with algorithm: \(self.selectedAlgorithm.name)")
             
-            self.renderTask = Task.detached(priority: .userInitiated) { [input, renderer, params] in
+            // Wrap CGImage in a Sendable wrapper to satisfy strict concurrency
+            let inputWrapper = SendableCGImage(image: input)
+            
+            self.renderTask = Task { @MainActor [renderer, params, inputWrapper] in
                 if Task.isCancelled {
                     print("⚠️ Render task cancelled before starting")
                     return
                 }
                 
-                let result = renderer.render(input: input, params: params)
+                // Call async render method
+                let result = await renderer.render(input: inputWrapper.image, params: params)
                 
                 if Task.isCancelled {
                     print("⚠️ Render task cancelled after render")
                     return
                 }
                 
-                await MainActor.run {
-                    if Task.isCancelled { return }
-                    print("✅ Render complete, updating UI")
-                    self.processedImage = result
-                }
+                if Task.isCancelled { return }
+                print("✅ Render complete, updating UI")
+                self.processedImage = result
             }
         }
     }
