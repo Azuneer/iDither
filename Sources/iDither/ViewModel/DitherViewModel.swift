@@ -181,25 +181,28 @@ class DitherViewModel {
             print("🔄 Processing image with algorithm: \(self.selectedAlgorithm.name)")
             
             // Wrap CGImage in a Sendable wrapper to satisfy strict concurrency
-            let inputWrapper = SendableCGImage(image: input)
+            let sendableInput = SendableCGImage(image: input)
             
-            self.renderTask = Task { @MainActor [renderer, params, inputWrapper] in
-                if Task.isCancelled {
+            // ✅ CHANGÉ : Enlève @MainActor de la Task
+            self.renderTask = Task { [sendableInput, renderer, params] in
+                if Task.isCancelled { 
                     print("⚠️ Render task cancelled before starting")
-                    return
+                    return 
                 }
                 
-                // Call async render method
-                let result = await renderer.render(input: inputWrapper.image, params: params)
+                // Le rendu s'exécute sur un thread d'arrière-plan (performant)
+                let result = await renderer.render(input: sendableInput.image, params: params)
                 
-                if Task.isCancelled {
+                if Task.isCancelled { 
                     print("⚠️ Render task cancelled after render")
-                    return
+                    return 
                 }
                 
-                if Task.isCancelled { return }
-                print("✅ Render complete, updating UI")
-                self.processedImage = result
+                // Dispatch vers MainActor UNIQUEMENT pour la mise à jour UI
+                await MainActor.run {
+                    print("✅ Render complete, updating UI")
+                    self.processedImage = result
+                }
             }
         }
     }
