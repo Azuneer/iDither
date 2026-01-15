@@ -33,18 +33,129 @@ jobs:
           -destination 'platform=macOS' \
           clean build
     
-    - name: Debug - List all build outputs
+    - name: Create App Bundle
       run: |
-        echo "🔍 === DIAGNOSTIC COMPLET ==="
+        echo "📦 Création du bundle .app..."
+        
+        # Chemins des éléments compilés
+        EXECUTABLE="./build/Build/Products/Release/iDither"
+        RESOURCES_BUNDLE="./build/Build/Products/Release/iDither_iDither.bundle"
+        
+        # Vérification de l'exécutable
+        if [ ! -f "$EXECUTABLE" ]; then
+          echo "❌ Exécutable non trouvé : $EXECUTABLE"
+          exit 1
+        fi
+        
+        echo "✅ Exécutable trouvé ($(du -h "$EXECUTABLE" | cut -f1))"
+        
+        # Crée la structure du bundle .app
+        APP_DIR="./iDither.app"
+        mkdir -p "$APP_DIR/Contents/MacOS"
+        mkdir -p "$APP_DIR/Contents/Resources"
+        
+        # Copie l'exécutable
+        cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/iDither"
+        chmod +x "$APP_DIR/Contents/MacOS/iDither"
+        echo "✅ Exécutable copié dans le bundle"
+        
+        # Copie le bundle de ressources (shaders Metal)
+        if [ -d "$RESOURCES_BUNDLE" ]; then
+          cp -R "$RESOURCES_BUNDLE" "$APP_DIR/Contents/Resources/"
+          echo "✅ Bundle de ressources copié (shaders Metal inclus)"
+        else
+          echo "⚠️  Bundle de ressources non trouvé (l'app pourrait ne pas fonctionner)"
+        fi
+        
+        # Crée Info.plist
+        cat > "$APP_DIR/Contents/Info.plist" << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>iDither</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.ewengadonnaud.iDither</string>
+            <key>CFBundleName</key>
+            <string>iDither</string>
+            <key>CFBundleDisplayName</key>
+            <string>iDither</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>14.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>LSApplicationCategoryType</key>
+            <string>public.app-category.graphics-design</string>
+        </dict>
+        </plist>
+        EOF
+        
+        echo "✅ Info.plist créé"
         echo ""
-        echo "📁 Contenu de ./build/Build/Products/Release/ :"
-        ls -laR ./build/Build/Products/Release/
-        echo ""
-        echo "🔍 Recherche de tous les .app :"
-        find ./build -name "*.app" -type d
-        echo ""
-        echo "🔍 Recherche de tous les exécutables :"
-        find ./build -type f -perm +111 -name "iDither"
-        echo ""
-        echo "🔍 Recherche de tous les fichiers :"
-        find ./build/Build/Products/Release/ -type f
+        echo "📦 Structure du bundle .app :"
+        ls -lh "$APP_DIR/Contents/MacOS/"
+        ls -lh "$APP_DIR/Contents/Resources/" 2>/dev/null || echo "(pas de ressources visibles)"
+    
+    - name: Create DMG
+      run: |
+        APP_PATH="./iDither.app"
+        
+        if [ ! -d "$APP_PATH" ]; then
+          echo "❌ Bundle .app non trouvé"
+          exit 1
+        fi
+        
+        echo "✅ Création du DMG depuis : $APP_PATH"
+        
+        # Crée un dossier temporaire pour le DMG
+        mkdir -p dmg_content
+        cp -R "$APP_PATH" dmg_content/
+        
+        # Ajoute un lien symbolique vers /Applications
+        ln -s /Applications dmg_content/Applications
+        
+        # Crée le DMG
+        DMG_NAME="iDither-${{ github.ref_name }}.dmg"
+        hdiutil create -volname "iDither" \
+          -srcfolder dmg_content \
+          -ov -format UDZO \
+          "$DMG_NAME"
+        
+        echo "✅ DMG créé :"
+        ls -lh "$DMG_NAME"
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: iDither-*.dmg
+        draft: false
+        prerelease: ${{ startsWith(github.ref, 'refs/tags/v0.') }}
+        body: |
+          ## iDither ${{ github.ref_name }}
+          
+          Application macOS native de dithering en temps réel, propulsée par Metal et SwiftUI.
+          
+          ### Installation
+          1. Téléchargez le fichier `.dmg`
+          2. Ouvrez-le et glissez **iDither** vers **Applications**
+          3. Au premier lancement : **clic droit** → **Ouvrir** (contournement de la sécurité Gatekeeper)
+          
+          ### Algorithmes disponibles
+          - Matrices ordonnées (Bayer 2x2, 4x4, 8x8 / Cluster 4x4, 8x8)
+          - Blue Noise approximé
+          - Diffusion d'erreur Floyd-Steinberg
+          - Mode Chaos/FX avec distorsions avancées
+          
+          ---
+          **Compatibilité :** macOS 14.0+ (Sonoma)  
+          **Architecture :** Apple Silicon (M1/M2/M3/M4) & Intel  
+          **Build automatique** via GitHub Actions
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
