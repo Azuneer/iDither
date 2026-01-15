@@ -1,6 +1,17 @@
 # iDither
 
-![iDither temporary logo](./assets/img/iDither.png)
+<p align="center">
+  <img src="https://img.shields.io/badge/Swift-6.0-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift 6.0">
+  <img src="https://img.shields.io/badge/Platform-macOS%2014.0%2B-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Platform macOS">
+  <img src="https://img.shields.io/badge/Render-Metal-666666?style=for-the-badge&logo=apple&logoColor=white" alt="Metal">
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge" alt="License: MIT">
+</p>
+
+<p align="center">
+  <img src="./assets/img/iDither.png" alt="iDither temporary logo" width="150">
+</p>
+
+<br>
 
 iDither est une application macOS native dédiée au traitement d'images par dithering. Elle exploite la puissance de Metal pour transformer des images en visuels rétro, lo-fi ou texturés avec un rendu en temps réel.
 
