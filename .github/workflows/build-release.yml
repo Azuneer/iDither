@@ -33,119 +33,18 @@ jobs:
           -destination 'platform=macOS' \
           clean build
     
-    - name: Verify build output
+    - name: Debug - List all build outputs
       run: |
-        echo "🔍 Contenu de ./build/Build/Products/Release/ :"
-        ls -la ./build/Build/Products/Release/
-    
-    - name: Create App Bundle
-      run: |
-        echo "📦 Création du bundle .app..."
-        
-        # Trouve l'exécutable compilé
-        EXECUTABLE_PATH=$(find ./build/Build/Products/Release -name "iDither" -type f -perm +111 | head -n 1)
-        
-        if [ -z "$EXECUTABLE_PATH" ]; then
-          echo "❌ Exécutable non trouvé"
-          echo "🔍 Contenu de Release:"
-          ls -la ./build/Build/Products/Release/
-          exit 1
-        fi
-        
-        echo "✅ Exécutable trouvé : $EXECUTABLE_PATH"
-        
-        # Crée la structure du bundle .app
-        APP_DIR="./iDither.app"
-        mkdir -p "$APP_DIR/Contents/MacOS"
-        mkdir -p "$APP_DIR/Contents/Resources"
-        
-        # Copie l'exécutable
-        cp "$EXECUTABLE_PATH" "$APP_DIR/Contents/MacOS/iDither"
-        chmod +x "$APP_DIR/Contents/MacOS/iDither"
-        
-        # Copie les ressources (bundle SPM)
-        if [ -d "./build/Build/Products/Release/iDither_iDither.bundle" ]; then
-          cp -R "./build/Build/Products/Release/iDither_iDither.bundle" "$APP_DIR/Contents/Resources/"
-          echo "✅ Bundle de ressources copié"
-        fi
-        
-        # Crée Info.plist
-        cat > "$APP_DIR/Contents/Info.plist" << EOF
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleExecutable</key>
-            <string>iDither</string>
-            <key>CFBundleIdentifier</key>
-            <string>com.ewengadonnaud.iDither</string>
-            <key>CFBundleName</key>
-            <string>iDither</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleShortVersionString</key>
-            <string>${{ github.ref_name }}</string>
-            <key>CFBundleVersion</key>
-            <string>1</string>
-            <key>LSMinimumSystemVersion</key>
-            <string>14.0</string>
-            <key>NSHighResolutionCapable</key>
-            <true/>
-        </dict>
-        </plist>
-        EOF
-        
-        echo "✅ Bundle .app créé : $APP_DIR"
-        ls -la "$APP_DIR/Contents/MacOS/"
-    
-    - name: Create DMG
-      run: |
-        APP_PATH="./iDither.app"
-        
-        if [ ! -d "$APP_PATH" ]; then
-          echo "❌ Bundle .app non trouvé"
-          exit 1
-        fi
-        
-        echo "✅ Création du DMG depuis : $APP_PATH"
-        
-        # Crée un dossier temporaire pour le DMG
-        mkdir -p dmg_content
-        cp -R "$APP_PATH" dmg_content/
-        
-        # Ajoute un lien vers /Applications
-        ln -s /Applications dmg_content/Applications
-        
-        # Crée le DMG
-        hdiutil create -volname "iDither" \
-          -srcfolder dmg_content \
-          -ov -format UDZO \
-          "iDither-${{ github.ref_name }}.dmg"
-        
-        echo "✅ DMG créé :"
-        ls -lh iDither-*.dmg
-    
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: iDither-*.dmg
-        draft: false
-        prerelease: ${{ startsWith(github.ref, 'refs/tags/v0.') }}
-        body: |
-          ## iDither ${{ github.ref_name }}
-          
-          Application macOS de dithering en temps réel.
-          
-          ### Installation
-          1. Téléchargez le fichier `.dmg`
-          2. Ouvrez-le et glissez iDither vers Applications
-          3. Au premier lancement, faites clic droit → Ouvrir (sécurité macOS)
-          
-          ### Changements
-          Build automatique via GitHub Actions
-          
-          ---
-          **Plateforme :** macOS 14.0+  
-          **Architecture :** Apple Silicon (M1/M2/M3) & Intel
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        echo "🔍 === DIAGNOSTIC COMPLET ==="
+        echo ""
+        echo "📁 Contenu de ./build/Build/Products/Release/ :"
+        ls -laR ./build/Build/Products/Release/
+        echo ""
+        echo "🔍 Recherche de tous les .app :"
+        find ./build -name "*.app" -type d
+        echo ""
+        echo "🔍 Recherche de tous les exécutables :"
+        find ./build -type f -perm +111 -name "iDither"
+        echo ""
+        echo "🔍 Recherche de tous les fichiers :"
+        find ./build/Build/Products/Release/ -type f
