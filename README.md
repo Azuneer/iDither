@@ -15,6 +15,10 @@
 
 iDither est une application macOS native dédiée au traitement d'images par dithering. Elle exploite la puissance de Metal pour transformer des images en visuels rétro, lo-fi ou texturés avec un rendu en temps réel.
 
+<p align="center">
+  <img src="./assets/img/idithershowcase.jpeg" width="800" title="iDither">
+</p>
+
 ## Fonctionnalités
 
 ### Algorithmes de Dithering
