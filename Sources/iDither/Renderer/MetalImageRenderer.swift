@@ -67,137 +67,127 @@ final class MetalImageRenderer {
     }
     
     func render(input: CGImage, params: RenderParameters) async -> CGImage? {
-        return await withCheckedContinuation { continuation in
-            autoreleasepool {
-                print("🎨 Metal render started - Image: \(input.width)x\(input.height), Algo: \(params.algorithm)")
-                
-                let textureLoader = MTKTextureLoader(device: device)
-                
-                // Load input texture
-                guard let inputTexture = try? textureLoader.newTexture(cgImage: input, options: [.origin: MTKTextureLoader.Origin.topLeft]) else {
-                    print("❌ Failed to create input texture")
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
-                print("✅ Input texture created: \(inputTexture.width)x\(inputTexture.height)")
-                
-                // Create output texture
-                let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
-                                                                      width: inputTexture.width,
-                                                                      height: inputTexture.height,
-                                                                      mipmapped: false)
-                descriptor.usage = [.shaderWrite, .shaderRead]
-                
-                guard let outputTexture = device.makeTexture(descriptor: descriptor) else {
-                    print("❌ Failed to create output texture")
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
-                // Encode command
-                guard let commandBuffer = commandQueue.makeCommandBuffer(),
-                      let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
-                    print("❌ Failed to create command buffer or encoder")
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
-                var params = params
-                
-                 if params.algorithm == 7, let pipe1 = pipelineStateFS_Pass1, let pipe2 = pipelineStateFS_Pass2 {
-                    print("🔄 Using Floyd-Steinberg two-pass rendering")
-                    
-                    // FLOYD-STEINBERG MULTI-PASS
-                    
-                    // Create Error Texture (Float16 or Float32 for precision)
-                    let errorDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float,
-                                                                             width: inputTexture.width,
-                                                                             height: inputTexture.height,
-                                                                             mipmapped: false)
-                    errorDesc.usage = [.shaderWrite, .shaderRead]
-                    
-                    // CRITICAL: Use autoreleasepool check for error texture too
-                    guard let errorTexture = device.makeTexture(descriptor: errorDesc) else {
-                         computeEncoder.endEncoding()
-                         continuation.resume(returning: nil)
-                         return
-                    }
-                    
-                    // PASS 1: Even Rows
-                    computeEncoder.setComputePipelineState(pipe1)
-                    computeEncoder.setTexture(inputTexture, index: 0)
-                    computeEncoder.setTexture(outputTexture, index: 1)
-                    computeEncoder.setTexture(errorTexture, index: 2)
-                    computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
-                    
-                    // Dispatch (1, H/2, 1) -> Each thread handles one full row
-                    let h = (inputTexture.height + 1) / 2
-                    let threadsPerGrid = MTLSizeMake(1, h, 1)
-                    let threadsPerThreadgroup = MTLSizeMake(1, min(h, pipe1.maxTotalThreadsPerThreadgroup), 1)
-                    
-                    computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-                    
-                    // Memory Barrier (Ensure Pass 1 writes are visible to Pass 2)
-                    computeEncoder.memoryBarrier(scope: .textures)
-                    
-                    // PASS 2: Odd Rows
-                    computeEncoder.setComputePipelineState(pipe2)
-                    computeEncoder.setTexture(inputTexture, index: 0)
-                    computeEncoder.setTexture(outputTexture, index: 1)
-                    computeEncoder.setTexture(errorTexture, index: 2)
-                    computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
-                    
-                    computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-                    
-                } else {
-                    print("🔄 Using standard dithering algorithm")
-                    
-                    // STANDARD ALGORITHMS
-                    computeEncoder.setComputePipelineState(pipelineState)
-                    computeEncoder.setTexture(inputTexture, index: 0)
-                    computeEncoder.setTexture(outputTexture, index: 1)
-                    computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
-                    
-                    let w = pipelineState.threadExecutionWidth
-                    let h = pipelineState.maxTotalThreadsPerThreadgroup / w
-                    let threadsPerThreadgroup = MTLSizeMake(w, h, 1)
-                    let threadsPerGrid = MTLSizeMake(inputTexture.width, inputTexture.height, 1)
-                    
-                    computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-                }
-
-                computeEncoder.endEncoding()
-                
-                // Add completion handler properly inside the closure
-                commandBuffer.addCompletedHandler { [weak self] buffer in
-                    // CRITICAL: Dispatch back to MainActor because self (MetalImageRenderer) is isolated
-                    // and createCGImage is isolated to MainActor.
-                    Task { @MainActor in
-                        guard let self = self else {
-                            continuation.resume(returning: nil)
-                            return
-                        }
-                        
-                        if let error = buffer.error {
-                            print("❌ Metal command buffer error: \(error)")
-                            continuation.resume(returning: nil)
-                        } else {
-                            print("✅ Metal render completed successfully")
-                            // Now we are on MainActor, we can safely call self.createCGImage
-                            let result = self.createCGImage(from: outputTexture)
-                            if result == nil {
-                                print("❌ Failed to create CGImage from output texture")
-                            }
-                            continuation.resume(returning: result)
-                        }
-                    }
-                }
-                
-                commandBuffer.commit()
+    return await withCheckedContinuation { continuation in
+        autoreleasepool {
+            print("🎨 Metal render started - Image: \(input.width)x\(input.height), Algo: \(params.algorithm)")
+            
+            let textureLoader = MTKTextureLoader(device: device)
+            
+            // Load input texture
+            guard let inputTexture = try? textureLoader.newTexture(cgImage: input, options: [.origin: MTKTextureLoader.Origin.topLeft]) else {
+                print("❌ Failed to create input texture")
+                continuation.resume(returning: nil)
+                return
             }
+            
+            print("✅ Input texture created: \(inputTexture.width)x\(inputTexture.height)")
+            
+            // Create output texture
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
+                                                                  width: inputTexture.width,
+                                                                  height: inputTexture.height,
+                                                                  mipmapped: false)
+            descriptor.usage = [.shaderWrite, .shaderRead]
+            
+            guard let outputTexture = device.makeTexture(descriptor: descriptor) else {
+                print("❌ Failed to create output texture")
+                continuation.resume(returning: nil)
+                return
+            }
+            
+            // Encode command
+            guard let commandBuffer = commandQueue.makeCommandBuffer(),
+                  let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+                print("❌ Failed to create command buffer or encoder")
+                continuation.resume(returning: nil)
+                return
+            }
+            
+            var params = params
+            
+            if params.algorithm == 7, let pipe1 = pipelineStateFS_Pass1, let pipe2 = pipelineStateFS_Pass2 {
+                print("🔄 Using Floyd-Steinberg two-pass rendering")
+                
+                let errorDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float,
+                                                                         width: inputTexture.width,
+                                                                         height: inputTexture.height,
+                                                                         mipmapped: false)
+                errorDesc.usage = [.shaderWrite, .shaderRead]
+                
+                guard let errorTexture = device.makeTexture(descriptor: errorDesc) else {
+                     computeEncoder.endEncoding()
+                     continuation.resume(returning: nil)
+                     return
+                }
+                
+                // PASS 1: Even Rows
+                computeEncoder.setComputePipelineState(pipe1)
+                computeEncoder.setTexture(inputTexture, index: 0)
+                computeEncoder.setTexture(outputTexture, index: 1)
+                computeEncoder.setTexture(errorTexture, index: 2)
+                computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
+                
+                let h = (inputTexture.height + 1) / 2
+                let threadsPerGrid = MTLSizeMake(1, h, 1)
+                let threadsPerThreadgroup = MTLSizeMake(1, min(h, pipe1.maxTotalThreadsPerThreadgroup), 1)
+                
+                computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+                computeEncoder.memoryBarrier(scope: .textures)
+                
+                // PASS 2: Odd Rows
+                computeEncoder.setComputePipelineState(pipe2)
+                computeEncoder.setTexture(inputTexture, index: 0)
+                computeEncoder.setTexture(outputTexture, index: 1)
+                computeEncoder.setTexture(errorTexture, index: 2)
+                computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
+                
+                computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+                
+            } else {
+                print("🔄 Using standard dithering algorithm")
+                
+                computeEncoder.setComputePipelineState(pipelineState)
+                computeEncoder.setTexture(inputTexture, index: 0)
+                computeEncoder.setTexture(outputTexture, index: 1)
+                computeEncoder.setBytes(&params, length: MemoryLayout<RenderParameters>.stride, index: 0)
+                
+                let w = pipelineState.threadExecutionWidth
+                let h = pipelineState.maxTotalThreadsPerThreadgroup / w
+                let threadsPerThreadgroup = MTLSizeMake(w, h, 1)
+                let threadsPerGrid = MTLSizeMake(inputTexture.width, inputTexture.height, 1)
+                
+                computeEncoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+            }
+
+            computeEncoder.endEncoding()
+            
+            // ✅ CRITICAL FIX: Capture outputTexture dans les deux closures
+            commandBuffer.addCompletedHandler { [outputTexture] buffer in
+                // Metal completion s'exécute sur com.Metal.CompletionQueueDispatch
+                // Dispatch vers MainActor car self et createCGImage() sont @MainActor
+                Task { @MainActor [outputTexture] in
+                    if let error = buffer.error {
+                        print("❌ Metal command buffer error: \(error)")
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    
+                    print("✅ Metal render completed successfully")
+                    
+                    // Maintenant on est sur MainActor ET outputTexture est capturée
+                    let result = self.createCGImage(from: outputTexture)
+                    if result == nil {
+                        print("❌ Failed to create CGImage from output texture")
+                    }
+                    
+                    continuation.resume(returning: result)
+                }
+            }
+            
+            commandBuffer.commit()
         }
     }
+}
     
     private func createCGImage(from texture: MTLTexture) -> CGImage? {
         let width = texture.width
