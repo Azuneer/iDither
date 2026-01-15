@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/img/iDither.png" alt="iDither temporary logo" width="150">
+  <img src="./assets/img/iDither.png" alt="iDither temporary logo" width="800">
 </p>
 
 <br>
