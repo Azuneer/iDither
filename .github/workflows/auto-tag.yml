@@ -1,0 +1,52 @@
+name: Auto Tag on Push
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Récupère tout l'historique pour les tags
+    
+    - name: Get latest tag
+      id: get_tag
+      run: |
+        # Récupère le dernier tag v0.x.x
+        LATEST_TAG=$(git tag -l "v0.*.*" | sort -V | tail -n 1)
+        
+        if [ -z "$LATEST_TAG" ]; then
+          # Pas de tag existant, on commence à v0.1.0
+          NEW_TAG="v0.1.0"
+        else
+          # Extrait les numéros de version
+          VERSION=${LATEST_TAG#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+          
+          # Incrémente le patch
+          NEW_PATCH=$((PATCH + 1))
+          NEW_TAG="v${MAJOR}.${MINOR}.${NEW_PATCH}"
+        fi
+        
+        echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+        echo "Nouveau tag: $NEW_TAG"
+    
+    - name: Create and push tag
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git tag ${{ steps.get_tag.outputs.new_tag }}
+        git push origin ${{ steps.get_tag.outputs.new_tag }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
